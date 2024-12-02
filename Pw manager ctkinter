@@ -1,0 +1,668 @@
+import customtkinter as ctk
+from PIL import Image, ImageTk
+import hashlib
+from cryptography.fernet import Fernet
+import random
+import string
+import sqlite3
+import smtplib
+from email.mime.text import MIMEText
+
+# Initialize database and tables
+conn = sqlite3.connect('password_vault.db')
+c = conn.cursor()
+c.execute('''
+CREATE TABLE IF NOT EXISTS users (
+    user_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    firstname TEXT NOT NULL,
+    surname TEXT NOT NULL,
+    username TEXT NOT NULL,
+    email TEXT NOT NULL,
+    hashed_password TEXT NOT NULL
+)
+''')
+c.execute('''
+CREATE TABLE IF NOT EXISTS services (
+    service_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    url TEXT NOT NULL
+)
+''')
+c.execute('''
+CREATE TABLE IF NOT EXISTS passwords (
+    password_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    service_id INTEGER NOT NULL,
+    username TEXT NOT NULL,
+    password TEXT NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users (user_id),
+    FOREIGN KEY (service_id) REFERENCES services (service_id)
+)
+''')
+conn.commit()
+conn.close()
+
+# Set the appearance mode to 'dark' (you can also use 'light')
+ctk.set_appearance_mode("dark")
+
+# Encryption key (this should be securely stored)
+encryption_key = Fernet.generate_key()
+cipher_suite = Fernet(encryption_key)
+
+def hash_password(password):
+    """Hash the master password using SHA-256."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+def encrypt_password(password):
+    """Encrypt the service passwords."""
+    return cipher_suite.encrypt(password.encode()).decode()
+
+def decrypt_password(encrypted_password):
+    """Decrypt the service passwords."""
+    return cipher_suite.decrypt(encrypted_password.encode()).decode()
+
+def generate_password(length=12, include_special_chars=True):
+    """Generate a random password."""
+    chars = string.ascii_letters + string.digits
+    if include_special_chars:
+        chars += string.punctuation
+    return ''.join(random.choice(chars) for _ in range(length))
+
+def create_icon_button(root, img_path, command):
+    """Create a button with an icon."""
+    icon_image = Image.open(img_path)
+    icon_image = icon_image.resize((30, 30), Image.Resampling.LANCZOS)
+    icon = ImageTk.PhotoImage(icon_image)
+    button = ctk.CTkButton(root, image=icon, command=command, text="")
+    button.pack(padx=10, pady=10)
+    return button
+
+def generate_verification_code():
+    return str(random.randint(100000, 999999))
+
+def send_verification_email(email, code):
+    msg = MIMEText(f"Your verification code is: {code}")
+    msg['Subject'] = 'Your Verification Code'
+    msg['From'] = 'your_email@example.com'
+    msg['To'] = email
+
+    with smtplib.SMTP('smtp.example.com') as server:
+        server.login('your_email@example.com', 'your_password')
+        server.send_message(msg)
+
+def welcome_screen():
+    """Display the welcome screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Crypto Vault Password Manager")
+    root.geometry("500x400")  # Set the window size
+
+    ctk.CTkLabel(root, text="Welcome to Crypto Vault Password Manager", font=("Montserrat", 16, "bold")).pack(pady=10)
+    ctk.CTkLabel(root, text="Securely store, generate and manage with ease, all in one.", font=("Montserrat", 12)).pack(pady=5)
+
+    ctk.CTkButton(root, text="Login", command=login_screen, width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Sign Up", command=sign_up_screen, width=200, height=40).pack(pady=5)
+
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"))
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"))
+
+    root.mainloop()
+
+def login_screen():
+    """Display the login screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Login to Your Account")
+    root.geometry("500x400")  # Set the window size
+
+    def login():
+        username = username_entry.get()
+        password = password_entry.get()
+        hashed_password = hash_password(password)
+        with sqlite3.connect("password_vault.db") as db:
+            cursor = db.cursor()
+            cursor.execute("SELECT * FROM users WHERE username = ? AND hashed_password = ?", (username, hashed_password))
+            result = cursor.fetchone()
+            if result:
+                user_id = result[0]
+                root.destroy()
+                main_dashboard(user_id)
+            else:
+                ctk.CTkMessageBox.showerror("Error", "Invalid credentials")
+
+    def forgot_password():
+        email = email_entry.get()
+        verification_code = generate_verification_code()
+        send_verification_email(email, verification_code)
+        ctk.CTkMessageBox.showinfo("Info", "Verification code sent to your email.")
+        # Navigate to the screen where the user enters the verification code
+        root.destroy()
+        verify_code_screen(verification_code, email)
+
+    ctk.CTkLabel(root, text="Login to Your Account", font=("Montserrat", 16, "bold")).pack(pady=10)
+    ctk.CTkLabel(root, text="Securely store, generate and manage with ease, all in one.", font=("Montserrat", 12)).pack(pady=5)
+
+    ctk.CTkLabel(root, text="Username:", font=("Montserrat", 10)).pack(pady=5)
+    username_entry = ctk.CTkEntry(root, width=200)
+    username_entry.pack()
+
+    ctk.CTkLabel(root, text="Password:", font=("Montserrat", 10)).pack(pady=5)
+    password_entry = ctk.CTkEntry(root, show='*', width=200)
+    password_entry.pack()
+
+    ctk.CTkButton(root, text="Login", command=login, width=200, height=40).pack(pady=10)
+
+    ctk.CTkLabel(root, text="Enter your email:", font=("Montserrat", 10)).pack(pady=5)
+    email_entry = ctk.CTkEntry(root, width=200)
+    email_entry.pack()
+    ctk.CTkButton(root, text="Send Verification Code", command=forgot_password, width=200, height=40).pack(pady=10)
+
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), welcome_screen()])
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"))
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"))
+
+    root.mainloop()
+
+def verify_code_screen(expected_code, email):
+    """Display the verification code screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Verify Code")
+    root.geometry("500x400")  # Set the window size
+
+    def verify_code():
+        entered_code = verification_code_entry.get()
+        if entered_code == expected_code:
+            ctk.CTkMessageBox.showinfo("Success", "Verification successful. You can now reset your password.")
+            root.destroy()
+            reset_password_screen(email)  # Proceed to reset password screen
+        else:
+            ctk.CTkMessageBox.showerror("Error", "Invalid verification code.")
+
+    ctk.CTkLabel(root, text="Verify the Code Sent to Your Email", font=("Montserrat", 16, "bold")).pack(pady=10)
+    verification_code_entry = ctk.CTkEntry(root, width=200, font=("Montserrat", 12))
+    verification_code_entry.pack(pady=10)
+
+    ctk.CTkButton(root, text="Verify Code", command=verify_code, width=200, height=40).pack(pady=10)
+
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), login_screen()])
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"))
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"))
+
+    root.mainloop()
+
+def reset_password_screen(email):
+    """Display the reset password screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Reset Password")
+    root.geometry("500x400")  # Set the window size
+
+    def reset_password():
+        new_password = new_password_entry.get()
+        retype_password = retype_password_entry.get()
+        if new_password == retype_password:
+            hashed_password = hash_password(new_password)
+            # Update the user's password in the database
+            with sqlite3.connect("password_vault.db") as db:
+                cursor = db.cursor()
+                cursor.execute("UPDATE users SET hashed_password = ? WHERE email = ?", (hashed_password, email))
+                db.commit()
+            ctk.CTkMessageBox.showinfo("Success", "Password reset successfully!")
+            root.destroy()
+            login_screen()
+        else:
+            ctk.CTkMessageBox.showerror("Error", "Passwords do not match")
+
+    ctk.CTkLabel(root, text="Reset Your Password", font=("Montserrat", 16, "bold")).pack(pady=10)
+
+    ctk.CTkLabel(root, text="New Password:", font=("Montserrat", 12)).pack(pady=5)
+    new_password_entry = ctk.CTkEntry(root, show='*', width=200)
+    new_password_entry.pack()
+
+    ctk.CTkLabel(root, text="Re-type New Password:", font=("Montserrat", 12)).pack(pady=5)
+    retype_password_entry = ctk.CTkEntry(root, show='*', width=200)
+    retype_password_entry.pack()
+
+    ctk.CTkButton(root, text="Reset Password", command=reset_password, width=200, height=40).pack(pady=10)
+
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), login_screen()])
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"))
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"))
+
+    root.mainloop()
+
+def sign_up_screen():
+    """Display the sign-up screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Create an Account")
+    root.geometry("500x600")  # Set the window size
+
+    def sign_up():
+        firstname = first_name_entry.get()
+        surname = surname_entry.get()
+        username = username_entry.get()
+        email = email_entry.get()
+        password = password_entry.get()
+        retype_password = retype_password_entry.get()
+        if password == retype_password:
+            hashed_password = hash_password(password)
+            with sqlite3.connect("password_vault.db") as db:
+                cursor = db.cursor()
+                cursor.execute("INSERT INTO users (firstname, surname, username, email, hashed_password) VALUES (?, ?, ?, ?, ?)",
+                               (firstname, surname, username, email, hashed_password))
+                db.commit()
+            ctk.CTkMessageBox.showinfo("Success", "Account created successfully!")
+            root.destroy()
+            login_screen()
+        else:
+            ctk.CTkMessageBox.showerror("Error", "Passwords do not match")
+
+    ctk.CTkLabel(root, text="Create an Account", font=("Montserrat", 16, "bold")).pack(pady=10)
+
+    ctk.CTkLabel(root, text="First Name", font=("Montserrat", 12)).pack(pady=5)
+    first_name_entry = ctk.CTkEntry(root, width=200)
+    first_name_entry.pack()
+
+    ctk.CTkLabel(root, text="Surname", font=("Montserrat", 12)).pack(pady=5)
+    surname_entry = ctk.CTkEntry(root, width=200)
+    surname_entry.pack()
+
+    ctk.CTkLabel(root, text="Username", font=("Montserrat", 12)).pack(pady=5)
+    username_entry = ctk.CTkEntry(root, width=200)
+    username_entry.pack()
+
+    ctk.CTkLabel(root, text="Email", font=("Montserrat", 12)).pack(pady=5)
+    email_entry = ctk.CTkEntry(root, width=200)
+    email_entry.pack()
+
+    ctk.CTkLabel(root, text="Password", font=("Montserrat", 12)).pack(pady=5)
+    password_entry = ctk.CTkEntry(root, show='*', width=200)
+    password_entry.pack()
+
+    ctk.CTkLabel(root, text="Re-type Password", font=("Montserrat", 12)).pack(pady=5)
+    retype_password_entry = ctk.CTkEntry(root, show='*', width=200)
+    retype_password_entry.pack()
+
+    ctk.CTkButton(root, text="Sign Up", command=sign_up, width=200, height=40).pack(pady=10)
+
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), welcome_screen()])
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"))
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"))
+
+    root.mainloop()
+
+def main_dashboard(user_id):
+    """Display the main dashboard."""
+    global root
+    root = ctk.CTk()
+    root.title("Crypto Vault Password Manager")
+    root.geometry("600x500")  # Set the window size
+
+    def sign_out():
+        root.destroy()
+        welcome_screen()
+
+    def navigate_to_generate_password():
+        root.destroy()
+        generate_password_screen()
+
+    def navigate_to_add_password():
+        root.destroy()
+        add_password_screen()
+
+    def navigate_to_password_health_check():
+        root.destroy()
+        password_health_checker()
+
+    def fetch_stored_passwords(user_id):
+        # Connect to the database and fetch stored passwords for the logged-in user
+        with sqlite3.connect("password_vault.db") as db:
+            cursor = db.cursor()
+            cursor.execute("""
+            SELECT services.name, services.url, passwords.username, passwords.password 
+            FROM passwords 
+            INNER JOIN services ON passwords.service_id = services.service_id 
+            WHERE passwords.user_id = ?
+            """, (user_id,))
+            return cursor.fetchall()
+
+    stored_passwords = fetch_stored_passwords(user_id)
+    
+    ctk.CTkLabel(root, text="Crypto Vault Password Manager", font=("Montserrat", 16, "bold")).pack(pady=10)
+    ctk.CTkButton(root, text="Sign Out", command=sign_out, width=100, height=40).pack(side="top", anchor="nw", padx=10, pady=10)
+
+    ctk.CTkLabel(root, text="Stored Passwords", font=("Montserrat", 14, "bold")).pack(pady=10)
+    
+    passwords_frame = ctk.CTkFrame(root)
+    passwords_frame.pack(pady=10)
+
+    for idx, password in enumerate(stored_passwords):
+        ctk.CTkLabel(passwords_frame, text=f"Website: {password[1]}", font=("Montserrat", 12)).grid(row=idx, column=0, sticky='w')
+        ctk.CTkLabel(passwords_frame, text=f"Username: {password[2]}", font=("Montserrat", 12)).grid(row=idx, column=1, sticky='w')
+        ctk.CTkLabel(passwords_frame, text="Password: •••••••••••••••••", font=("Montserrat", 12)).grid(row=idx, column=2, sticky='w')
+        ctk.CTkButton(passwords_frame, text="Copy", width=100, height=40).grid(row=idx, column=3, padx=5)
+
+    ctk.CTkButton(root, text="Generate Password", command=navigate_to_generate_password, width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Add New Password", command=navigate_to_add_password, width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Password Health Checker", command=navigate_to_password_health_check, width=200, height=40).pack(pady=5)
+
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"), side="left", anchor="nw")
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"), side="right", anchor="ne")
+
+    root.mainloop()
+
+def generate_password_screen():
+    """Display the generate password screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Generate Password")
+    root.geometry("500x600")  # Set the window size
+
+    def generate_password():
+        length = length_var.get()
+        include_numbers = include_numbers_var.get()
+        include_special = include_special_var.get()
+        include_upper = include_upper_var.get()
+
+        chars = string.ascii_lowercase
+        if include_numbers:
+            chars += string.digits
+        if include_special:
+            chars += string.punctuation
+        if include_upper:
+            chars += string.ascii_uppercase
+
+        password = ''.join(random.choice(chars) for _ in range(length))
+        password_entry.delete(0, ctk.END)
+        password_entry.insert(0, password)
+    
+    ctk.CTkLabel(root, text="Generate Password", font=("Montserrat", 16, "bold")).pack(pady=10)
+    
+    ctk.CTkLabel(root, text="Password Length", font=("Montserrat", 12)).pack(pady=5)
+    length_var = ctk.IntVar(value=12)
+    ctk.CTkSlider(root, from_=4, to_=20, variable=length_var, width=200).pack(pady=5)
+
+    include_numbers_var = ctk.BooleanVar(value=True)
+    include_special_var = ctk.BooleanVar(value=True)
+    include_upper_var = ctk.BooleanVar(value=True)
+
+    ctk.CTkCheckBox(root, text="Include Numbers", variable=include_numbers_var, font=("Montserrat", 12)).pack(anchor='w')
+    ctk.CTkCheckBox(root, text="Include Special Characters", variable=include_special_var, font=("Montserrat", 12)).pack(anchor='w')
+    ctk.CTkCheckBox(root, text="Include Uppercase Letters", variable=include_upper_var, font=("Montserrat", 12)).pack(anchor='w')
+
+    ctk.CTkButton(root, text="Generate Password", command=generate_password, width=200, height=40).pack(pady=10)
+    
+    ctk.CTkLabel(root, text="Generated Password", font=("Montserrat", 12)).pack(pady=5)
+    password_entry = ctk.CTkEntry(root, font=("Montserrat", 12), width=200)
+    password_entry.pack()
+
+    ctk.CTkButton(root, text="Save Password", width=200, height=40).pack(pady=10)
+
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), main_dashboard(user_id=1)], side="left", anchor="nw")
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"), side="left", anchor="nw")
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"), side="right", anchor="ne")
+
+    root.mainloop()
+
+def add_password_screen():
+    """Display the add password screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Add New Password")
+    root.geometry("500x600")  # Set the window size
+
+    def save_password():
+        website = website_entry.get()
+        username = username_entry.get()
+        password = password_entry.get()
+        retype_password = retype_password_entry.get()
+        if password == retype_password:
+            encrypted_password = encrypt_password(password)
+            with sqlite3.connect("password_vault.db") as db:
+                cursor = db.cursor()
+                cursor.execute("INSERT INTO passwords (user_id, service_id, username, password) VALUES (?, ?, ?, ?)",
+                               (user_id, 1, username, encrypted_password))  # Assuming service_id=1 for simplicity
+                db.commit()
+            ctk.CTkMessageBox.showinfo("Success", "Password saved successfully!")
+            root.destroy()
+            main_dashboard(user_id)
+        else:
+            ctk.CTkMessageBox.showerror("Error", "Passwords do not match")
+
+    ctk.CTkLabel(root, text="Add New Password", font=("Montserrat", 16, "bold")).pack(pady=10)
+    
+    ctk.CTkLabel(root, text="Website", font=("Montserrat", 12)).pack(pady=5)
+    website_entry = ctk.CTkEntry(root, font=("Montserrat", 12), width=200)
+    website_entry.pack()
+
+    ctk.CTkLabel(root, text="Username", font=("Montserrat", 12)).pack(pady=5)
+    username_entry = ctk.CTkEntry(root, font=("Montserrat", 12), width=200)
+    username_entry.pack()
+
+    ctk.CTkLabel(root, text="Password", font=("Montserrat", 12)).pack(pady=5)
+    password_entry = ctk.CTkEntry(root, show='*', font=("Montserrat", 12), width=200)
+    password_entry.pack()
+
+    ctk.CTkLabel(root, text="Re-type Password", font=("Montserrat", 12)).pack(pady=5)
+    retype_password_entry = ctk.CTkEntry(root, show='*', font=("Montserrat", 12), width=200)
+    retype_password_entry.pack()
+
+    ctk.CTkButton(root, text="Save Password", command=save_password, width=200, height=40).pack(pady=10)
+    
+    ctk.CTkLabel(root, text="or...", font=("Montserrat", 12)).pack(pady=5)
+    ctk.CTkButton(root, text="Generate Password", width=200, height=40).pack(pady=5)
+    
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), main_dashboard(user_id)], side="left", anchor="nw")
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"), side="left", anchor="nw")
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"), side="right", anchor="ne")
+
+    root.mainloop()
+
+def password_health_checker():
+    """Display the password health checker screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Password Health Checker")
+    root.geometry("600x400")  # Set the window size
+
+    def recheck_passwords():
+        ctk.CTkMessageBox.showinfo("Info", "Re-checking passwords...")
+        root.destroy()
+        password_health_checker()
+
+    ctk.CTkLabel(root, text="Password Health Checker", font=("Montserrat", 16, "bold")).pack(pady=10)
+
+    passwords_frame = ctk.CTkFrame(root)
+    passwords_frame.pack(pady=10)
+
+    # Example of stored passwords with health check
+    passwords = [
+        {"website": "https://www.example.com", "username": "johnsmith123", "strength": "strong"},
+        {"website": "https://www.example.com", "username": "JSmith123", "strength": "weak"},
+        {"website": "https://www.example.com", "username": "JS123", "strength": "moderate"}
+    ]
+
+    for idx, password in enumerate(passwords):
+        ctk.CTkLabel(passwords_frame, text=f"Website: {password['website']}", font=("Montserrat", 12)).grid(row=idx, column=0, sticky='w')
+        ctk.CTkLabel(passwords_frame, text=f"Username: {password['username']}", font=("Montserrat", 12)).grid(row=idx, column=1, sticky='w')
+        ctk.CTkLabel(passwords_frame, text="Password: •••••••••••••••••", font=("Montserrat", 12)).grid(row=idx, column=2, sticky='w')
+
+        if password["strength"] == "strong":
+            ctk.CTkLabel(passwords_frame, text="This password is strong.", font=("Montserrat", 12, "bold"), fg_color="green").grid(row=idx, column=3, sticky='w')
+        else:
+            strength_color = "red" if password["strength"] == "weak" else "orange"
+            ctk.CTkLabel(passwords_frame, text=f"This password is {password['strength']}. Update now.", font=("Montserrat", 12, "bold"), fg_color=strength_color).grid(row=idx, column=3, sticky='w')
+            ctk.CTkButton(passwords_frame, text="Update", width=100, height=40).grid(row=idx, column=4, padx=5)
+
+    ctk.CTkButton(root, text="Re-Check", command=recheck_passwords, width=200, height=40).pack(pady=10)
+
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), main_dashboard(user_id)], side="left", anchor="nw")
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"), side="left", anchor="nw")
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"), side="right", anchor="ne")
+
+    root.mainloop()
+
+def settings_screen():
+    """Display the settings screen."""
+    global root
+    root = ctk.CTk()
+    root.title("Settings")
+    root.geometry("500x600")  # Set the window size
+
+    def save_settings():
+        # Save the user's settings
+        ctk.CTkMessageBox.showinfo("Success", "Settings saved successfully!")
+        root.destroy()
+        main_dashboard(user_id)
+
+    def cancel_and_exit():
+        root.destroy()
+        main_dashboard(user_id)
+
+    ctk.CTkLabel(root, text="Settings", font=("Montserrat", 16, "bold")).pack(pady=10)
+
+    # Account Settings
+    ctk.CTkLabel(root, text="Account Settings", font=("Montserrat", 14, "bold")).pack(pady=5)
+    ctk.CTkButton(root, text="Change Username/Email", width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Password Reset", width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Two-Factor Authentication (2FA)", width=200, height=40).pack(pady=5)
+    ctk.CTkCheckBox(root, text="Enable 2FA", font=("Montserrat", 12), variable=ctk.BooleanVar()).pack(anchor='w')
+
+    # Security Settings
+    ctk.CTkLabel(root, text="Security Settings", font=("Montserrat", 14, "bold")).pack(pady=5)
+    ctk.CTkButton(root, text="Master Password Strength", width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Device Syncing", width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Backup Settings", width=200, height=40).pack(pady=5)
+
+    # General Settings
+    ctk.CTkLabel(root, text="General", font=("Montserrat", 14, "bold")).pack(pady=5)
+    ctk.CTkButton(root, text="Change Theme", width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="System Language", width=200, height=40).pack(pady=5)
+    ctk.CTkButton(root, text="Notification Settings", width=200, height=40).pack(pady=5)
+
+    # Save and Cancel buttons
+    ctk.CTkButton(root, text="Save", command=save_settings, width=200, height=40).pack(pady=10)
+    ctk.CTkButton(root, text="Cancel and Exit", command=cancel_and_exit, width=200, height=40).pack(pady=10)
+
+    create_icon_button(root, "chat.png", command=lambda: print("Chat clicked"), side="left", anchor="nw")
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"), side="right", anchor="ne")
+
+    root.mainloop()
+
+def chatbot_screen():
+    """Display the chatbot screen with preprogrammed responses."""
+    global root
+    root = ctk.CTk()
+    root.title("Crypto Vault PM Chatbot")
+    root.geometry("500x600")  # Set the window size
+
+    def send_message():
+        user_message = user_input.get()
+        if user_message.strip():
+            chat_log.config(state=ctk.NORMAL)
+            chat_log.insert(ctk.END, f"You: {user_message}\n", "user")
+            response = get_response(user_message)
+            chat_log.insert(ctk.END, f"Assistant: {response}\n\n", "assistant")
+            chat_log.config(state=ctk.DISABLED)
+            user_input.delete(0, ctk.END)
+
+    def get_response(message):
+        responses = {
+            "create password": "To create a new password, go to the 'Add New Password' screen.",
+            "retrieve password": "To retrieve a stored password, navigate to the main dashboard and view your stored passwords.",
+            "security settings": "You can enable security settings in the 'Settings' screen.",
+            "forgot password": "If you forgot your password, use the 'Password Reset' feature on the login screen.",
+            "default": "I'm here to help you use Crypto Vault PM. You can ask me about creating, retrieving, or managing your passwords, enabling security settings, or anything else you need assistance with."
+        }
+        return responses.get(message.lower(), responses["default"])
+
+    def automated_welcome_message():
+        chat_log.config(state=ctk.NORMAL)
+        welcome_message = "Hi there! I'm here to help you use Crypto Vault PM. You can ask me questions about creating, retrieving, or managing your passwords, enabling security settings, or anything else you need help with. Just type your question below, and I'll do my best to assist you!"
+        chat_log.insert(ctk.END, f"Assistant: {welcome_message}\n\n", "assistant")
+        chat_log.config(state=ctk.DISABLED)
+
+    chat_log = ctk.CTkText(root, font=("Montserrat", 12), state=ctk.DISABLED, wrap=ctk.WORD)
+    chat_log.pack(pady=10, padx=10, fill=ctk.BOTH, expand=True)
+    chat_log.tag_config("user", foreground="blue")
+    chat_log.tag_config("assistant", foreground="green")
+
+    user_input = ctk.CTkEntry(root, font=("Montserrat", 12), width=50)
+    user_input.pack(pady=10, padx=10, side=ctk.LEFT, fill=ctk.X, expand=True)
+
+    ctk.CTkButton(root, text="Send", command=send_message, font=("Montserrat", 12)).pack(pady=10, padx=10, side=ctk.LEFT)
+
+    create_icon_button(root, "back.png", command=lambda: [root.destroy(), main_dashboard(user_id)], side="left", anchor="nw")
+    create_icon_button(root, "settings.png", command=lambda: print("Settings clicked"), side="left", anchor="nw")
+    create_icon_button(root, "info.png", command=lambda: print("Info clicked"), side="right", anchor="ne")
+
+    automated_welcome_message()
+    root.mainloop()
+
+class Tutorial:
+    def __init__(self, user_id):
+        self.step = 0
+        self.user_id = user_id
+        self.steps = [
+            self.dashboard_step,
+            self.generate_password_step,
+            self.add_password_step,
+            self.password_health_check_step,
+            self.settings_step
+        ]
+
+    def start(self):
+        self.next_step()
+
+    def next_step(self):
+        if self.step < len(self.steps):
+            self.steps[self.step]()
+            self.step += 1
+        else:
+            self.end_tutorial()
+
+    def previous_step(self):
+        if self.step > 0:
+            self.step -= 1
+            self.steps[self.step]()
+
+    def skip_tutorial(self):
+        self.end_tutorial()
+
+    def end_tutorial(self):
+        main_dashboard(self.user_id)
+
+    def dashboard_step(self):
+        self.show_tutorial_bubble("Welcome to the Main Dashboard. Here you can manage your passwords and settings.", main_dashboard)
+
+    def generate_password_step(self):
+        self.show_tutorial_bubble("This is the Generate Password screen. You can generate strong passwords here.", generate_password_screen)
+
+    def add_password_step(self):
+        self.show_tutorial_bubble("This is the Add New Password screen. You can add new passwords to your vault.", add_password_screen)
+
+    def password_health_check_step(self):
+        self.show_tutorial_bubble("This is the Password Health Checker. It helps you ensure your passwords are strong.", password_health_checker)
+
+    def settings_step(self):
+        self.show_tutorial_bubble("This is the Settings screen. Customize your experience here.", settings_screen)
+
+    def show_tutorial_bubble(self, text, navigation_function):
+        bubble = ctk.CTkToplevel()
+        bubble.title("Tutorial")
+        bubble.geometry("400x300")
+        ctk.CTkLabel(bubble, text=text, font=("Montserrat", 12)).pack(pady=20)
+        ctk.CTkButton(bubble, text="Previous", command=self.previous_step, font=("Montserrat", 10)).pack(side="left", padx=10, pady=10)
+        ctk.CTkButton(bubble, text="Next", command=self.next_step, font=("Montserrat", 10)).pack(side="right", padx=10, pady=10)
+        ctk.CTkButton(bubble, text="Skip", command=self.skip_tutorial, font=("Montserrat", 10)).pack(side="bottom", pady=10)
+        navigation_function()
+
+if __name__ == "__main__":
+    user_id = 1  # Replace with the actual user ID after login
+    welcome_screen()
+    tutorial = Tutorial(user_id)
+    tutorial.start()
+
+
